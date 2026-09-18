@@ -1,0 +1,162 @@
+name: PR Validation
+
+# `tests` asks whether the logic is right; `smoke` asks whether the action runs.
+#
+# No org is involved, and no anchor tag is moved: the smoke job exercises
+# everything up to the login — the toolchain install, the base resolution, the
+# delta build, the empty-delta short circuit — and stops where a real
+# deployment would begin. What happens inside `project deploy start` is
+# Salesforce's own behaviour.
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 'lts/*'
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Check that action.yml parses
+        run: |
+          pip install --quiet --disable-pip-version-check pyyaml
+          python3 test/check-action-yaml.py
+
+  smoke:
+    name: Smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 'lts/*'
+
+      - name: Build the fixture repository
+        run: test/fixtures/setup.sh "${{ runner.temp }}/fixture"
+
+      - name: Run with no credential at all
+        id: no-credential
+        uses: ./
+        continue-on-error: true
+        with:
+          working-directory: ${{ runner.temp }}/fixture
+          install-toolchain: 'false'
+          head-sha: change
+          base-sha: base
+
+      - name: Check that it refused, and said what to set
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          [ "${{ steps.no-credential.outcome }}" = "failure" ] || fail "A run with no credential must fail; it reported '${{ steps.no-credential.outcome }}'."
+          [ "${{ steps.no-credential.outputs.outcome }}" = "failed" ] || fail "The outcome output should be 'failed', got '${{ steps.no-credential.outputs.outcome }}'."
+
+      # The empty-delta path: a push carrying no metadata, which must finish
+      # green without ever authenticating. This call installs the toolchain, so
+      # the install is exercised once.
+      - name: A push with no metadata in it
+        id: empty
+        uses: ./
+        with:
+          working-directory: ${{ runner.temp }}/fixture
+          head-sha: docs
+          base-sha: base
+          # Deliberately nonsense: the point is that it is never used.
+          jwt-key: not-a-key
+          username: nobody@example.com
+          client-id: unused
+          # No tag is moved in a test repository, and there would be no token
+          # for this one anyway.
+          move-anchor: 'false'
+
+      - name: Check that it skipped without an org
+        env:
+          OUTCOME: ${{ steps.empty.outputs.outcome }}
+          COMPONENTS: ${{ steps.empty.outputs.components }}
+        run: |
+          echo "outcome=$OUTCOME components=$COMPONENTS"
+          fail() { echo "::error::$1"; exit 1; }
+          [ "$OUTCOME" = "skipped" ] || fail "A push with no metadata must report 'skipped', got '$OUTCOME'. If it reported 'failed' the run reached the login, which the empty-delta check exists to avoid."
+          [ "$COMPONENTS" = "0" ] || fail "Expected an empty delta, got '$COMPONENTS' component(s)."
+
+      - name: A push with metadata in it
+        id: real
+        uses: ./
+        continue-on-error: true
+        with:
+          working-directory: ${{ runner.temp }}/fixture
+          head-sha: change
+          base-sha: base
+          jwt-key: not-a-key
+          username: nobody@example.com
+          client-id: unused
+          install-toolchain: 'false'
+          move-anchor: 'false'
+          environment: fixture
+
+      - name: Check the delta it built
+        env:
+          COMPONENTS: ${{ steps.real.outputs.components }}
+          MANIFEST: ${{ runner.temp }}/fixture/${{ steps.real.outputs.manifest-path }}
+          TAG: ${{ steps.real.outputs.anchor-tag }}
+          DEPLOYED: ${{ steps.real.outputs.deployed-sha }}
+        run: |
+          echo "components=$COMPONENTS manifest=$MANIFEST tag=$TAG deployed=$DEPLOYED"
+          fail() { echo "::error::$1"; exit 1; }
+          [ "${{ steps.real.outcome }}" = "failure" ] || fail "With a nonsense key the login must fail; the step reported '${{ steps.real.outcome }}'."
+          [ "$COMPONENTS" = "1" ] || fail "Expected 1 component in the delta, got '$COMPONENTS'."
+          grep -q "<name>ApexClass</name>" "$MANIFEST" || fail "The generated manifest does not list the changed class: $(cat "$MANIFEST" 2>&1)"
+          [ -z "$DEPLOYED" ] || fail "Nothing was deployed, so deployed-sha must be empty; it was '$DEPLOYED'."
+
+      # The anchor is the part with teeth: a tag moved after a run that did not
+      # reach the org would make every later delta start too late and silently
+      # drop components. Check-only must never move it.
+      - name: A check-only run never moves the anchor
+        id: check-only
+        uses: ./
+        continue-on-error: true
+        with:
+          working-directory: ${{ runner.temp }}/fixture
+          head-sha: docs
+          base-sha: base
+          jwt-key: not-a-key
+          username: nobody@example.com
+          client-id: unused
+          install-toolchain: 'false'
+          check-only: 'true'
+          move-anchor: 'true'
+          environment: fixture
+
+      - name: Check that the anchor stayed put
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          [ "${{ steps.check-only.outputs.anchor-tag }}" = "ci/deployed/fixture" ] || fail "Expected the anchor tag to be composed from the prefix and the environment, got '${{ steps.check-only.outputs.anchor-tag }}'."
+          [ -z "${{ steps.check-only.outputs.deployed-sha }}" ] || fail "A check-only run must not move the anchor; it reported '${{ steps.check-only.outputs.deployed-sha }}'."
+
+      - name: Check that nothing was left on disk
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          if ls "${{ runner.temp }}"/sf-auth-*.key > /dev/null 2>&1; then
+            fail "A credential file survived the run: $(ls "${{ runner.temp }}"/sf-auth-*.key)"
+          fi
