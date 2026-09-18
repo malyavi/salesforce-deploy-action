@@ -1,6 +1,6 @@
-import {describe, it}                                    from 'node:test';
-import assert                                             from 'node:assert/strict';
-import {parseManifest}                                    from '../lib/manifest.mjs';
+import {describe, it}                                                      from 'node:test';
+import assert                                                              from 'node:assert/strict';
+import {parseManifest}                                                     from '../lib/manifest.mjs';
 import {FOLDER_SCOPED_TYPES, parseListing, pruneDestructive, renderPruned} from '../lib/destructive.mjs';
 
 /**

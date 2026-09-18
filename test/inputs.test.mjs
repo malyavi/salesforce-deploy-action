@@ -11,7 +11,7 @@ import {
   listInput,
   rawInput,
   requireInput
-}                                 from '../lib/inputs.mjs';
+}                                from '../lib/inputs.mjs';
 
 /**
  * The input layer, which is the one piece of every action in this family that

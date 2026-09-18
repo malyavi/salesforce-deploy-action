@@ -1,24 +1,12 @@
-import {anchorTag, recordDeployed}          from '../lib/anchor.mjs';
-import {resolveConfig}                      from '../lib/config.mjs';
-import {error, group, setOutput, summary}   from '../lib/core.mjs';
-import {buildDelta, isEmpty, resolveScope}  from '../lib/delta.mjs';
-import {pruneDestructive, renderPruned}     from '../lib/destructive.mjs';
-import {failureMessage}                     from '../lib/inputs.mjs';
-import {
-  summaryDelta,
-  summaryFailed,
-  summaryFull,
-  summaryNothing,
-  summarySucceeded
-}                                           from '../lib/report.mjs';
-import {
-  authenticate,
-  clearActiveDeployment,
-  deploy,
-  registerActiveDeployment,
-  teardown
-}                                           from '../lib/salesforce.mjs';
-import {installToolchain}                   from '../lib/toolchain.mjs';
+import {anchorTag, recordDeployed}                                                       from '../lib/anchor.mjs';
+import {resolveConfig}                                                                   from '../lib/config.mjs';
+import {error, group, setOutput, summary}                                                from '../lib/core.mjs';
+import {buildDelta, isEmpty, resolveScope}                                               from '../lib/delta.mjs';
+import {pruneDestructive, renderPruned}                                                  from '../lib/destructive.mjs';
+import {failureMessage}                                                                  from '../lib/inputs.mjs';
+import {summaryDelta, summaryFailed, summaryFull, summaryNothing, summarySucceeded}      from '../lib/report.mjs';
+import {authenticate, clearActiveDeployment, deploy, registerActiveDeployment, teardown} from '../lib/salesforce.mjs';
+import {installToolchain}                                                                from '../lib/toolchain.mjs';
 
 /**
  * Deploys metadata to an org — what changed since the last deployment, or the

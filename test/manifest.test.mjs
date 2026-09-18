@@ -1,5 +1,5 @@
 import {describe, it} from 'node:test';
-import assert          from 'node:assert/strict';
+import assert         from 'node:assert/strict';
 import {
   parseManifest,
   renderDeltaSummary,
@@ -7,7 +7,7 @@ import {
   renderPackageXml,
   splitManifest,
   versionOf
-}                      from '../lib/manifest.mjs';
+}                     from '../lib/manifest.mjs';
 
 /**
  * Reading and writing the manifests, which are the whole of what the org is

@@ -1,18 +1,12 @@
-import {afterEach, describe, it}                           from 'node:test';
-import assert                                               from 'node:assert/strict';
-import {anchorTag, recordDeployed}                          from '../lib/anchor.mjs';
-import {MODES, resolveConfig, resolveCredentials, TEST_LEVELS} from '../lib/config.mjs';
-import {isEmpty, resolveRange, resolveScope}                from '../lib/delta.mjs';
-import {ConfigError}                                        from '../lib/inputs.mjs';
-import {
-  summaryFailed,
-  summaryFull,
-  summaryNothing,
-  summarySucceeded,
-  verb
-}                                                           from '../lib/report.mjs';
-import {deployIdFrom, toPem}                                from '../lib/salesforce.mjs';
-import {versioned}                                          from '../lib/toolchain.mjs';
+import {afterEach, describe, it}                                            from 'node:test';
+import assert                                                               from 'node:assert/strict';
+import {anchorTag, recordDeployed}                                          from '../lib/anchor.mjs';
+import {MODES, resolveConfig, resolveCredentials, TEST_LEVELS}              from '../lib/config.mjs';
+import {isEmpty, resolveRange, resolveScope}                                from '../lib/delta.mjs';
+import {ConfigError}                                                        from '../lib/inputs.mjs';
+import {summaryFailed, summaryFull, summaryNothing, summarySucceeded, verb} from '../lib/report.mjs';
+import {deployIdFrom, toPem}                                                from '../lib/salesforce.mjs';
+import {versioned}                                                          from '../lib/toolchain.mjs';
 
 /**
  * Everything the action decides before it touches an org, and what it says
