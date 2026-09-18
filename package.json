@@ -1,0 +1,14 @@
+{
+  "name": "salesforce-deploy-action",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GitHub Action deploying changed Salesforce metadata to an org",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "license": "MIT"
+}

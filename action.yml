@@ -1,0 +1,252 @@
+name: Salesforce metadata deployment
+description: >-
+  Deploys changed Salesforce metadata to an org and records what reached it, so
+  the next deployment diffs from what is live rather than from what was pushed.
+author: Malyavi
+
+branding:
+  icon: upload-cloud
+  color: blue
+
+inputs:
+  jwt-key:
+    description: >-
+      Private key for the JWT bearer flow, as PEM or base64-encoded PEM. Pass
+      this with `username` and `client-id`, or pass `auth-url` instead.
+    required: false
+    default: ''
+  username:
+    description: Username to authenticate as.
+    required: false
+    default: ''
+  client-id:
+    description: Consumer key of the connected app the key belongs to.
+    required: false
+    default: ''
+  instance-url:
+    description: >-
+      Login URL. `https://test.salesforce.com` for a sandbox, a My Domain URL
+      for an org that requires one.
+    required: false
+    default: https://login.salesforce.com
+  auth-url:
+    description: >-
+      An sfdx auth URL, as an alternative to the three JWT inputs. Store it as a
+      secret; it carries a refresh token.
+    required: false
+    default: ''
+  org-alias:
+    description: Alias the org is authenticated under for the duration of the run.
+    required: false
+    default: deploy-target
+  mode:
+    description: >-
+      `delta` deploys what changed since the last deployment; `full` deploys the
+      whole source directory, which is how an org is seeded or resynced after
+      it has drifted.
+    required: false
+    default: delta
+  check-only:
+    description: >-
+      Run the same deployment and the same tests but save nothing. The anchor is
+      left where it is, because nothing reached the org.
+    required: false
+    default: 'false'
+  source-dirs:
+    description: >-
+      The package directories to deploy, comma- or newline-separated. Several
+      get one flag each, so a repository with more than one package directory
+      produces a single delta whose manifest can resolve a component in either.
+    required: false
+    default: force-app
+  base-sha:
+    description: >-
+      Commit to diff against. Overrides the anchor tag, which is what a run
+      would otherwise use.
+    required: false
+    default: ''
+  before-sha:
+    description: >-
+      The commit the branch pointed at before this push — pass the push event's
+      own `before`. Used only when there is no anchor tag to diff from.
+    required: false
+    default: ''
+  head-sha:
+    description: Commit to deploy. Defaults to the commit the workflow is running for.
+    required: false
+    default: ''
+  ignore-whitespace:
+    description: Whether a whitespace-only change counts as a change.
+    required: false
+    default: 'true'
+  destructive-changes:
+    description: >-
+      When deletions are applied: `post` (after the additions), `pre` (before
+      them), or `ignore` to leave them out of the run.
+    required: false
+    default: post
+  prune-destructive:
+    description: >-
+      Whether to drop deletions the org has already applied. A deletion of a
+      component that is not there is a hard error, and that happens whenever
+      something left the org by another route.
+    required: false
+    default: 'true'
+  test-level:
+    description: '`NoTestRun`, `RunSpecifiedTests`, `RunLocalTests` or `RunAllTestsInOrg`.'
+    required: false
+    default: RunLocalTests
+  tests:
+    description: Test classes to run, comma-separated. Required by `RunSpecifiedTests`.
+    required: false
+    default: ''
+  wait-minutes:
+    description: How long to wait for the org before giving up.
+    required: false
+    default: '30'
+  api-version:
+    description: >-
+      API version for a rewritten destructive manifest. Read from
+      sfdx-project.json when unset.
+    required: false
+    default: ''
+  move-anchor:
+    description: >-
+      Whether to move the tag that records what the org has. Turn it off only
+      for a deployment that is not the environment's own history.
+    required: false
+    default: 'true'
+  tag-prefix:
+    description: Prefix of the anchor tag; the environment is appended to it.
+    required: false
+    default: ci/deployed
+  anchor-tag:
+    description: The anchor tag's full name, when the prefix and environment do not compose it.
+    required: false
+    default: ''
+  environment:
+    description: >-
+      What this target is called — it names the anchor tag and appears in the
+      summaries. Defaults to the branch being deployed.
+    required: false
+    default: ''
+  install-toolchain:
+    description: >-
+      Whether to install the Salesforce CLI and sfdx-git-delta. Turn off for a
+      repository that pins them itself.
+    required: false
+    default: 'true'
+  sf-cli-version:
+    description: Version of the Salesforce CLI to install.
+    required: false
+    default: latest
+  sgd-version:
+    description: Version of sfdx-git-delta to install.
+    required: false
+    default: latest
+  logout:
+    description: Whether to revoke the session and delete the key when the run ends.
+    required: false
+    default: 'true'
+  label:
+    description: How the run is named in the messages it writes.
+    required: false
+    default: Deployment
+  working-directory:
+    description: Directory holding the Salesforce project.
+    required: false
+    default: '.'
+  github-token:
+    description: >-
+      Token used to read the commit history and to move the anchor tag. Needs
+      `contents: write` for the tag.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  outcome:
+    description: '`passed`, `failed` or `skipped`.'
+    value: ${{ steps.deploy.outputs.outcome }}
+  deploy-id:
+    description: The deployment's job id.
+    value: ${{ steps.deploy.outputs.deploy-id }}
+  deployed-sha:
+    description: The commit the anchor now records, or empty when it did not move.
+    value: ${{ steps.deploy.outputs.deployed-sha }}
+  anchor-tag:
+    description: The anchor tag this run used.
+    value: ${{ steps.deploy.outputs.anchor-tag }}
+  components:
+    description: Components in the delta.
+    value: ${{ steps.deploy.outputs.components }}
+  deletions:
+    description: Deletions in the delta, after pruning.
+    value: ${{ steps.deploy.outputs.deletions }}
+  base-sha:
+    description: The commit the delta was taken against.
+    value: ${{ steps.deploy.outputs.base-sha }}
+  manifest-path:
+    description: The generated package manifest.
+    value: ${{ steps.deploy.outputs.manifest-path }}
+  destructive-path:
+    description: The generated destructive manifest.
+    value: ${{ steps.deploy.outputs.destructive-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Deploy the changed metadata
+      id: deploy
+      shell: bash
+      env:
+        # A composite action does not populate INPUT_* for its own run steps,
+        # so every input is mapped here and read through lib/inputs.mjs.
+        INPUT_JWT_KEY: ${{ inputs.jwt-key }}
+        INPUT_USERNAME: ${{ inputs.username }}
+        INPUT_CLIENT_ID: ${{ inputs.client-id }}
+        INPUT_INSTANCE_URL: ${{ inputs.instance-url }}
+        INPUT_AUTH_URL: ${{ inputs.auth-url }}
+        INPUT_ORG_ALIAS: ${{ inputs.org-alias }}
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_CHECK_ONLY: ${{ inputs.check-only }}
+        INPUT_SOURCE_DIRS: ${{ inputs.source-dirs }}
+        INPUT_BASE_SHA: ${{ inputs.base-sha }}
+        INPUT_BEFORE_SHA: ${{ inputs.before-sha }}
+        INPUT_HEAD_SHA: ${{ inputs.head-sha }}
+        INPUT_IGNORE_WHITESPACE: ${{ inputs.ignore-whitespace }}
+        INPUT_DESTRUCTIVE_CHANGES: ${{ inputs.destructive-changes }}
+        INPUT_PRUNE_DESTRUCTIVE: ${{ inputs.prune-destructive }}
+        INPUT_TEST_LEVEL: ${{ inputs.test-level }}
+        INPUT_TESTS: ${{ inputs.tests }}
+        INPUT_WAIT_MINUTES: ${{ inputs.wait-minutes }}
+        INPUT_API_VERSION: ${{ inputs.api-version }}
+        INPUT_MOVE_ANCHOR: ${{ inputs.move-anchor }}
+        INPUT_TAG_PREFIX: ${{ inputs.tag-prefix }}
+        INPUT_ANCHOR_TAG: ${{ inputs.anchor-tag }}
+        INPUT_ENVIRONMENT: ${{ inputs.environment }}
+        INPUT_INSTALL_TOOLCHAIN: ${{ inputs.install-toolchain }}
+        INPUT_SF_CLI_VERSION: ${{ inputs.sf-cli-version }}
+        INPUT_SGD_VERSION: ${{ inputs.sgd-version }}
+        INPUT_LOGOUT: ${{ inputs.logout }}
+        INPUT_LABEL: ${{ inputs.label }}
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        # Non-interactive CLI behaviour. Set here rather than documented as the
+        # caller's job: every one of them wants all four.
+        SF_DISABLE_TELEMETRY: 'true'
+        SF_DISABLE_AUTOUPDATE: 'true'
+        SF_SKIP_NEW_VERSION_CHECK: 'true'
+        SF_USE_GENERIC_UNIX_KEYCHAIN: 'true'
+      run: node "$GITHUB_ACTION_PATH/scripts/deploy.mjs"
+
+    # always(): the step above tears down in its own `finally`, which covers
+    # every way it can end on its own. This covers the ways it cannot — a
+    # cancelled job, a step timeout — where the key is still on disk, the
+    # session is still live, and a deployment may still be holding the org's
+    # deployment lock.
+    - name: Clean up the credential
+      if: ${{ always() && inputs.logout == 'true' }}
+      shell: bash
+      env:
+        INPUT_ORG_ALIAS: ${{ inputs.org-alias }}
+      run: node "$GITHUB_ACTION_PATH/scripts/cleanup.mjs"
