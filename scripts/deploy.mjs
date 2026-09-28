@@ -4,7 +4,15 @@ import {error, group, setOutput, summary}                                       
 import {buildDelta, isEmpty, resolveScope}                                               from '../lib/delta.mjs';
 import {pruneDestructive, renderPruned}                                                  from '../lib/destructive.mjs';
 import {failureMessage}                                                                  from '../lib/inputs.mjs';
-import {summaryDelta, summaryFailed, summaryFull, summaryNothing, summarySucceeded}      from '../lib/report.mjs';
+import {findValidation, startedDeployment, verifyValidation}                             from '../lib/quick-deploy.mjs';
+import {
+  summaryAfresh,
+  summaryDelta,
+  summaryFailed,
+  summaryFull,
+  summaryNothing,
+  summarySucceeded
+}                                                                                        from '../lib/report.mjs';
 import {authenticate, clearActiveDeployment, deploy, registerActiveDeployment, teardown} from '../lib/salesforce.mjs';
 import {installToolchain}                                                                from '../lib/toolchain.mjs';
 
@@ -15,6 +23,12 @@ import {installToolchain}                                                       
  * The delta is built before the org is touched, so a push carrying no metadata
  * costs no login; and the anchor tag moves last, so it only ever records a
  * deployment that actually finished.
+ *
+ * A delta that a pull request already validated can be *promoted* instead of
+ * deployed: `quick-deploy` looks for the validation action's record of this
+ * tree and, when the org still holds the result, deploys it by its job id
+ * without running the tests again. See `lib/quick-deploy.mjs` for the bar a
+ * record has to clear, and `lib/validation-record.mjs` for the record.
  */
 
 /** The resolved configuration, for the signal handlers and the failure handler. */
@@ -61,6 +75,9 @@ async function main() {
   }
 
   if (config.mode === 'full') {
+    if (config.quickDeploy) {
+      console.log('A full deployment is not a delta, so there is no validation to promote.');
+    }
     await deployFull();
     return;
   }
@@ -87,7 +104,16 @@ async function deployDelta() {
     return;
   }
 
+  // Looked up before the login: the record and the trees are GitHub's and
+  // git's to answer, and a delta nothing validated should not wait on the org
+  // to find that out.
+  const validation = await findCoveringValidation(delta);
+
   await group('Authenticate to the org', () => authenticate(config));
+
+  if (validation && await promote(validation, delta)) {
+    return;
+  }
 
   if (config.pruneDestructive && !delta.destructive.isEmpty) {
     const pruned = await group(
@@ -109,6 +135,96 @@ async function deployDelta() {
   }
 
   await send(resolveScope(delta, config), delta.headSha);
+}
+
+/**
+ * Looks for a validation that covers exactly this delta, when asked to.
+ *
+ * A check-only run never promotes: a quick deploy is a real deployment, and a
+ * run that promised to save nothing keeps that promise ahead of saving time.
+ *
+ * @param {object} delta The delta description
+ * @return {Promise<{ tag: string, record: object }|null>} The validation to promote, or null
+ */
+async function findCoveringValidation(delta) {
+  if (!config.quickDeploy) {
+    return null;
+  }
+  if (config.checkOnly) {
+    console.log('Check-only run; a validation is not promoted into the org.');
+    return null;
+  }
+
+  const found = await group('Look for a validation to promote', () => findValidation(delta, config));
+  if (!found.record) {
+    console.log(`No validation to promote: ${found.reason}.`);
+    await summary(summaryAfresh(found.reason));
+    return null;
+  }
+  console.log(`Validation ${found.record.deployId} (${found.tag}) covers this delta.`);
+  return found;
+}
+
+/**
+ * Promotes a validation: checks that the org still holds its result, then
+ * deploys it by its job id, without the tests.
+ *
+ * Two outcomes hand the run back to the ordinary path — the org does not
+ * have the validation, or refuses to promote it before any deployment starts.
+ * Both are worth a line and nothing more, because the ordinary path was what
+ * the run would have done anyway. A quick deploy that started and then failed
+ * is a verdict, and is reported as one.
+ *
+ * @param {{ tag: string, record: object }} validation The validation to promote
+ * @param {object} delta The delta description
+ * @return {Promise<boolean>} True when the delta reached the org this way
+ */
+async function promote({tag, record}, delta) {
+  const {deployId} = record;
+
+  const refused = await group(
+    `Check validation ${deployId} in the org`,
+    () => verifyValidation(deployId, config.orgAlias)
+  );
+  if (refused) {
+    console.log(`Not promoting ${deployId}: ${refused}.`);
+    await summary(summaryAfresh(refused));
+    return false;
+  }
+
+  const scope = {label: `the delta, as validated by \`${tag}\``, promotedFrom: deployId};
+  const args = ['--job-id', deployId, '--wait', String(config.waitMinutes)];
+
+  let result;
+  try {
+    result = await deploy(args, {
+      verb: 'quick',
+      orgAlias: config.orgAlias,
+      promotedFrom: deployId,
+      onJobId: (jobId) => registerActiveDeployment(jobId, config.orgAlias)
+    });
+  } catch (thrown) {
+    await clearActiveDeployment();
+    const output = thrown.output ?? thrown.message;
+    if (!startedDeployment(output, deployId)) {
+      const reason = `the org would not promote validation \`${deployId}\`; see the job log for its answer`;
+      console.log(`${reason}.`);
+      await summary(summaryAfresh(reason));
+      return false;
+    }
+    await summary(summaryDelta(config, delta));
+    await summary(summaryFailed(config, scope, output));
+    await publishOutcome('failed', undefined, undefined, deployId);
+    throw thrown;
+  }
+
+  await clearActiveDeployment();
+
+  const anchor = await advanceAnchor(delta.headSha);
+  await summary(summaryDelta(config, delta));
+  await summary(summarySucceeded(config, scope, anchor));
+  await publishOutcome('passed', result.deployId, anchor, deployId);
+  return true;
 }
 
 /**
@@ -202,11 +318,13 @@ async function publishDelta(delta) {
  * @param {string} outcome `passed`, `failed` or `skipped`
  * @param {string} [deployId] The deployment's job id
  * @param {{ anchored: boolean, tag: string, sha: string }} [anchor] What the anchor records
+ * @param {string} [promotedFrom] The validation's job id, when one was promoted
  * @return {Promise<void>}
  */
-async function publishOutcome(outcome, deployId, anchor) {
+async function publishOutcome(outcome, deployId, anchor, promotedFrom) {
   await setOutput('outcome', outcome);
   await setOutput('deploy-id', deployId ?? '');
+  await setOutput('promoted-from', promotedFrom ?? '');
   await setOutput('anchor-tag', anchor?.tag ?? '');
   await setOutput('deployed-sha', anchor?.anchored ? anchor.sha : '');
 }

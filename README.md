@@ -61,6 +61,58 @@ the full tree fails on components no diff ever touches — and the way back afte
 an org has drifted. A full run carries **no** deletions, because it has no diff
 to derive them from.
 
+## Promoting a validation instead of deploying
+
+A pull request validated with
+[salesforce-validation-action](https://github.com/malyavi/salesforce-validation-action)
+has already had its package compiled and its tests run by the org, and the org
+keeps that result for ten days. With `quick-deploy: true`, a deployment of the
+same change is **promoted** from that validation — `sf project deploy quick` —
+rather than run again with its tests, which for a production org with a long
+suite is most of the run.
+
+```yaml
+- uses: malyavi/salesforce-deploy-action@v1
+  with:
+    jwt-key: ${{ secrets.SF_JWT_KEY }}
+    username: ${{ vars.SF_USERNAME }}
+    client-id: ${{ vars.SF_CLIENT_ID }}
+    before-sha: ${{ github.event.before }}
+    quick-deploy: 'true'
+```
+
+The validation action records a passing run as an annotated tag,
+`ci/validated/<environment>/<tree>`, whose message says what was validated:
+the job id, the two commits and their trees, the package directories, the
+handling of deletions and whitespace, and the test level. Named by the **tree**
+on purpose: a pull request is validated as its merge commit, which is never the
+commit that lands on the branch, but a squash, a rebase and a merge all produce
+the same tree as long as the base did not move. So "nothing changed since the
+validation" is a lookup.
+
+A validation is promoted only when it is **the same package**:
+
+- the tree it validated is the tree being deployed, and the tree it diffed from
+  is the tree the anchor points at — what the org has;
+- it covered the same `source-dirs`, with the same `destructive-changes` and
+  `ignore-whitespace`;
+- it ran at least this run's `test-level`;
+- it is less than ten days old, and the org still reports it as a succeeded
+  validation — which is also how a validation that ran against a different org
+  is caught.
+
+Anything short of that deploys afresh, with the tests, and the summary says
+which condition failed. A quick deploy the org refuses before starting — the
+validation expired between the check and the request — falls through the same
+way. One that starts and fails is a failed deployment, reported as one.
+
+The anchor moves after a promoted deployment exactly as after any other. A
+check-only run never promotes, because a quick deploy is a real deployment, and
+`mode: full` has no delta to match a validation against.
+
+The validation side needs `record-validation: true` on the validation action and
+`contents: write` in its workflow; the two default to the same tag prefix.
+
 ## Inputs
 
 ### The credential
@@ -83,6 +135,8 @@ name, before anything is installed.
 | --- | --- | --- |
 | `mode` | `delta` | `full` deploys the whole source directory. |
 | `check-only` | `false` | Runs the same deployment and tests and saves nothing. |
+| `quick-deploy` | `false` | Promote a recorded validation that covers exactly this delta, instead of running the tests again. |
+| `validation-tag-prefix` | `ci/validated` | Where the validation action records under; the environment and the tree follow it. |
 | `source-dirs` | `force-app` | The package directories to deploy. Several get one flag each, so a repository with more than one produces a single delta whose manifest resolves a component in either. |
 | `base-sha` | the anchor tag | Overrides the base entirely. |
 | `before-sha` | — | The push event's own `before`, used when there is no anchor yet. |
@@ -116,6 +170,7 @@ name, before anything is installed.
 | --- | --- |
 | `outcome` | `passed`, `failed` or `skipped`. |
 | `deploy-id` | The deployment's job id. |
+| `promoted-from` | The validation's job id, when the run promoted one — empty when it ran the tests. |
 | `deployed-sha` | The commit the anchor now records — empty when it did not move. |
 | `anchor-tag` | The tag this run used. |
 | `components`, `deletions`, `base-sha` | The size and origin of the delta. |
@@ -167,6 +222,7 @@ test/fixtures/setup.sh /tmp/fix    # a three-branch repository to run against
 ```
 
 The smoke job runs the action four times against that fixture — no credential,
-an empty delta, a real delta, and a check-only run — and asserts that the last
-one left the anchor alone. No org and no tag is involved; what happens inside a
-deployment is Salesforce's own behaviour.
+an empty delta, a real delta with `quick-deploy` on and nothing recorded, and a
+check-only run — and asserts that the last one left the anchor alone. No org
+and no tag is involved; what happens inside a deployment is Salesforce's own
+behaviour.
