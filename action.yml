@@ -52,6 +52,23 @@ inputs:
       left where it is, because nothing reached the org.
     required: false
     default: 'false'
+  quick-deploy:
+    description: >-
+      Whether to promote a validation the validation action recorded, when one
+      covers exactly this delta: the same tree at both ends, the same package
+      directories, the same handling of deletions and whitespace, at least this
+      test level, and less than ten days old. The org then deploys what it
+      already validated without running the tests again. Anything short of an
+      exact match deploys afresh and says why. Ignored by a check-only run and
+      by `mode: full`.
+    required: false
+    default: 'false'
+  validation-tag-prefix:
+    description: >-
+      Prefix of the tags the validation action records under. The environment
+      and the validated tree follow it.
+    required: false
+    default: ci/validated
   source-dirs:
     description: >-
       The package directories to deploy, comma- or newline-separated. Several
@@ -170,6 +187,11 @@ outputs:
   deploy-id:
     description: The deployment's job id.
     value: ${{ steps.deploy.outputs.deploy-id }}
+  promoted-from:
+    description: >-
+      The validation's job id, when the run promoted one with a quick deploy
+      rather than running the tests. Empty otherwise.
+    value: ${{ steps.deploy.outputs.promoted-from }}
   deployed-sha:
     description: The commit the anchor now records, or empty when it did not move.
     value: ${{ steps.deploy.outputs.deployed-sha }}
@@ -209,6 +231,8 @@ runs:
         INPUT_ORG_ALIAS: ${{ inputs.org-alias }}
         INPUT_MODE: ${{ inputs.mode }}
         INPUT_CHECK_ONLY: ${{ inputs.check-only }}
+        INPUT_QUICK_DEPLOY: ${{ inputs.quick-deploy }}
+        INPUT_VALIDATION_TAG_PREFIX: ${{ inputs.validation-tag-prefix }}
         INPUT_SOURCE_DIRS: ${{ inputs.source-dirs }}
         INPUT_BASE_SHA: ${{ inputs.base-sha }}
         INPUT_BEFORE_SHA: ${{ inputs.before-sha }}

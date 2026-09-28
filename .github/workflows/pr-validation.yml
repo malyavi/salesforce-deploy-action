@@ -100,6 +100,9 @@ jobs:
           [ "$OUTCOME" = "skipped" ] || fail "A push with no metadata must report 'skipped', got '$OUTCOME'. If it reported 'failed' the run reached the login, which the empty-delta check exists to avoid."
           [ "$COMPONENTS" = "0" ] || fail "Expected an empty delta, got '$COMPONENTS' component(s)."
 
+      # `quick-deploy` on, with nothing recorded: the lookup runs for real —
+      # the trees from git, the tag from the API — finds no record, says so in
+      # the summary, and the run carries on to the login exactly as before.
       - name: A push with metadata in it
         id: real
         uses: ./
@@ -113,6 +116,7 @@ jobs:
           client-id: unused
           install-toolchain: 'false'
           move-anchor: 'false'
+          quick-deploy: 'true'
           environment: fixture
 
       - name: Check the delta it built
@@ -121,13 +125,15 @@ jobs:
           MANIFEST: ${{ runner.temp }}/fixture/${{ steps.real.outputs.manifest-path }}
           TAG: ${{ steps.real.outputs.anchor-tag }}
           DEPLOYED: ${{ steps.real.outputs.deployed-sha }}
+          PROMOTED: ${{ steps.real.outputs.promoted-from }}
         run: |
-          echo "components=$COMPONENTS manifest=$MANIFEST tag=$TAG deployed=$DEPLOYED"
+          echo "components=$COMPONENTS manifest=$MANIFEST tag=$TAG deployed=$DEPLOYED promoted=$PROMOTED"
           fail() { echo "::error::$1"; exit 1; }
           [ "${{ steps.real.outcome }}" = "failure" ] || fail "With a nonsense key the login must fail; the step reported '${{ steps.real.outcome }}'."
           [ "$COMPONENTS" = "1" ] || fail "Expected 1 component in the delta, got '$COMPONENTS'."
           grep -q "<name>ApexClass</name>" "$MANIFEST" || fail "The generated manifest does not list the changed class: $(cat "$MANIFEST" 2>&1)"
           [ -z "$DEPLOYED" ] || fail "Nothing was deployed, so deployed-sha must be empty; it was '$DEPLOYED'."
+          [ -z "$PROMOTED" ] || fail "Nothing is recorded for the fixture, so promoted-from must be empty; it was '$PROMOTED'."
 
       # The anchor is the part with teeth: a tag moved after a run that did not
       # reach the org would make every later delta start too late and silently
