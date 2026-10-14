@@ -14,6 +14,7 @@ import {
   summarySucceeded
 }                                                                                        from '../lib/report.mjs';
 import {authenticate, clearActiveDeployment, deploy, registerActiveDeployment, teardown} from '../lib/salesforce.mjs';
+import {resolveTestLevel}                                                                from '../lib/test-level.mjs';
 import {installToolchain}                                                                from '../lib/toolchain.mjs';
 
 /**
@@ -29,6 +30,12 @@ import {installToolchain}                                                       
  * tree and, when the org still holds the result, deploys it by its job id
  * without running the tests again. See `lib/quick-deploy.mjs` for the bar a
  * record has to clear, and `lib/validation-record.mjs` for the record.
+ *
+ * A delta of markup alone — components, pages, email templates — is deployed
+ * without the Apex tests whatever level was asked for, because nothing in it
+ * is reachable from one; see `lib/test-level.mjs`. The validation action
+ * applies the same rule, so its record of such a change says `NoTestRun`,
+ * and a deployment that resolves to the same level promotes it.
  */
 
 /** The resolved configuration, for the signal handlers and the failure handler. */
@@ -104,14 +111,22 @@ async function deployDelta() {
     return;
   }
 
+  // Decided before the record is looked up, so the level a validation has to
+  // have run is the level this deployment would actually run.
+  const testing = resolveTestLevel(delta, config);
+  if (testing.skipped) {
+    console.log(testing.reason);
+  }
+  const ran = {...config, testLevel: testing.testLevel, tests: testing.tests};
+
   // Looked up before the login: the record and the trees are GitHub's and
   // git's to answer, and a delta nothing validated should not wait on the org
   // to find that out.
-  const validation = await findCoveringValidation(delta);
+  const validation = await findCoveringValidation(delta, ran);
 
   await group('Authenticate to the org', () => authenticate(config));
 
-  if (validation && await promote(validation, delta)) {
+  if (validation && await promote(validation, delta, ran)) {
     return;
   }
 
@@ -134,7 +149,7 @@ async function deployDelta() {
     await summary(summaryDelta(config, delta));
   }
 
-  await send(resolveScope(delta, config), delta.headSha);
+  await send(resolveScope(delta, config), delta.headSha, ran, testing.reason);
 }
 
 /**
@@ -144,9 +159,10 @@ async function deployDelta() {
  * run that promised to save nothing keeps that promise ahead of saving time.
  *
  * @param {object} delta The delta description
+ * @param {object} ran The configuration with the test level this run would use
  * @return {Promise<{ tag: string, record: object }|null>} The validation to promote, or null
  */
-async function findCoveringValidation(delta) {
+async function findCoveringValidation(delta, ran) {
   if (!config.quickDeploy) {
     return null;
   }
@@ -155,10 +171,10 @@ async function findCoveringValidation(delta) {
     return null;
   }
 
-  const found = await group('Look for a validation to promote', () => findValidation(delta, config));
+  const found = await group('Look for a validation to promote', () => findValidation(delta, ran));
   if (!found.record) {
     console.log(`No validation to promote: ${found.reason}.`);
-    await summary(summaryAfresh(found.reason));
+    await summary(summaryAfresh(found.reason, ran.testLevel !== 'NoTestRun'));
     return null;
   }
   console.log(`Validation ${found.record.deployId} (${found.tag}) covers this delta.`);
@@ -177,9 +193,10 @@ async function findCoveringValidation(delta) {
  *
  * @param {{ tag: string, record: object }} validation The validation to promote
  * @param {object} delta The delta description
+ * @param {object} ran The configuration with the test level this run would use
  * @return {Promise<boolean>} True when the delta reached the org this way
  */
-async function promote({tag, record}, delta) {
+async function promote({tag, record}, delta, ran) {
   const {deployId} = record;
 
   const refused = await group(
@@ -188,7 +205,7 @@ async function promote({tag, record}, delta) {
   );
   if (refused) {
     console.log(`Not promoting ${deployId}: ${refused}.`);
-    await summary(summaryAfresh(refused));
+    await summary(summaryAfresh(refused, ran.testLevel !== 'NoTestRun'));
     return false;
   }
 
@@ -209,7 +226,7 @@ async function promote({tag, record}, delta) {
     if (!startedDeployment(output, deployId)) {
       const reason = `the org would not promote validation \`${deployId}\`; see the job log for its answer`;
       console.log(`${reason}.`);
-      await summary(summaryAfresh(reason));
+      await summary(summaryAfresh(reason, ran.testLevel !== 'NoTestRun'));
       return false;
     }
     await summary(summaryDelta(config, delta));
@@ -242,7 +259,7 @@ async function deployFull() {
   await summary(summaryFull(config, headSha));
 
   await group('Authenticate to the org', () => authenticate(config));
-  await send(resolveScope({}, config), headSha);
+  await send(resolveScope({}, config), headSha, config);
 }
 
 /**
@@ -250,13 +267,15 @@ async function deployFull() {
  *
  * @param {{ args: string[], label: string }} scope What to deploy
  * @param {string|undefined} headSha The commit being deployed
+ * @param {object} ran The configuration with the test level this run uses
+ * @param {string} [testNote] Why that level is not the one asked for, when it is not
  * @return {Promise<void>}
  */
-async function send(scope, headSha) {
+async function send(scope, headSha, ran, testNote = '') {
   const args = [
     ...scope.args,
-    '--test-level', config.testLevel,
-    ...config.tests.flatMap((name) => ['--tests', name]),
+    '--test-level', ran.testLevel,
+    ...ran.tests.flatMap((name) => ['--tests', name]),
     '--wait', String(config.waitMinutes)
   ];
 
@@ -278,7 +297,7 @@ async function send(scope, headSha) {
   await clearActiveDeployment();
 
   const anchor = await advanceAnchor(headSha);
-  await summary(summarySucceeded(config, scope, anchor));
+  await summary(summarySucceeded(ran, scope, anchor, testNote));
   await publishOutcome('passed', result.deployId, anchor);
 }
 
