@@ -1,8 +1,10 @@
 import {describe, it}                                                  from 'node:test';
 import assert                                                          from 'node:assert/strict';
+import {parseManifest}                                                 from '../lib/manifest.mjs';
 import {findValidation, mismatch, startedDeployment, verifyValidation} from '../lib/quick-deploy.mjs';
 import {summaryAfresh, summarySucceeded}                               from '../lib/report.mjs';
 import {newDeployId}                                                   from '../lib/salesforce.mjs';
+import {resolveTestLevel}                                              from '../lib/test-level.mjs';
 import {
   ageInDays,
   isExpired,
@@ -148,6 +150,28 @@ describe('mismatch', () => {
     assert.equal(mismatch({...record, testLevel: 'RunAllTestsInOrg'}, delta, config, NOW), null);
   });
 
+  it('promotes a validation that skipped the tests for a UI-only delta, since this deployment skips them too', () => {
+    // The level compared is the one this run resolves to, not the one it was
+    // configured with: both actions apply the same rule to the same delta.
+    const uiOnly = {
+      package: parseManifest('<types><members>contactList</members><name>LightningComponentBundle</name></types>'),
+      destructive: parseManifest('')
+    };
+    const ran = {...config, ...resolveTestLevel(uiOnly, {...config, tests: []})};
+    assert.equal(ran.testLevel, 'NoTestRun');
+    assert.equal(mismatch({...record, testLevel: 'NoTestRun'}, delta, ran, NOW), null);
+  });
+
+  it('still refuses a no-test validation for a delta this deployment would test', () => {
+    const withApex = {
+      package: parseManifest('<types><members>ContactService</members><name>ApexClass</name></types>'),
+      destructive: parseManifest('')
+    };
+    const ran = {...config, ...resolveTestLevel(withApex, {...config, tests: []})};
+    assert.equal(ran.testLevel, 'RunLocalTests');
+    assert.match(mismatch({...record, testLevel: 'NoTestRun'}, delta, ran, NOW), /ran `NoTestRun`/);
+  });
+
   it('refuses a validation the org will have forgotten', () => {
     const old = {...record, validatedAt: new Date(NOW - 12 * DAY).toISOString()};
     assert.match(mismatch(old, delta, config, NOW), /12 days old, and the org keeps a validation for 10/);
@@ -243,5 +267,32 @@ describe('the summaries', () => {
       summaryAfresh('no validation is recorded for this tree'),
       ':information_source: Deployed afresh, with its tests: no validation is recorded for this tree.'
     );
+  });
+
+  it('do not claim the tests ran when a UI-only delta was deployed afresh', () => {
+    assert.equal(
+      summaryAfresh('no validation is recorded for this tree', false),
+      ':information_source: Deployed afresh: no validation is recorded for this tree.'
+    );
+  });
+
+  it('report the level that ran, and why it is not the one asked for, when the tests were skipped', () => {
+    const summary = summarySucceeded(
+      {environment: 'production', testLevel: 'NoTestRun', checkOnly: false},
+      {label: 'the delta'},
+      {anchored: false},
+      'Apex tests skipped: every change here is UI metadata (`LightningComponentBundle`), which no Apex test can reach. `RunLocalTests` was asked for.'
+    );
+    assert.match(summary, /Apex test level: `NoTestRun` — Apex tests skipped/);
+    assert.match(summary, /`RunLocalTests` was asked for/);
+  });
+
+  it('say nothing extra when the level is the one asked for', () => {
+    const summary = summarySucceeded(
+      {environment: '', testLevel: 'RunLocalTests', checkOnly: false},
+      {label: 'the delta'},
+      {anchored: false}
+    );
+    assert.match(summary, /Apex test level: `RunLocalTests`$/m);
   });
 });

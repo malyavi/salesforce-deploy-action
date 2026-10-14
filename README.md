@@ -96,7 +96,9 @@ A validation is promoted only when it is **the same package**:
   is the tree the anchor points at — what the org has;
 - it covered the same `source-dirs`, with the same `destructive-changes` and
   `ignore-whitespace`;
-- it ran at least this run's `test-level`;
+- it ran at least this run's `test-level` — the level this run would actually
+  use, so a UI-only change validated without tests is promoted by a
+  deployment that would skip them too;
 - it is less than ten days old, and the org still reports it as a succeeded
   validation — which is also how a validation that ran against a different org
   is caught.
@@ -112,6 +114,22 @@ check-only run never promotes, because a quick deploy is a real deployment, and
 
 The validation side needs `record-validation: true` on the validation action and
 `contents: write` in its workflow; the two default to the same tag prefix.
+
+## A UI-only change skips the Apex tests
+
+When every component in the delta — added, modified or deleted — is a
+`LightningComponentBundle`, `AuraDefinitionBundle`, `ApexPage`, `ApexComponent`
+or `EmailTemplate`, the deployment runs at `NoTestRun` whatever `test-level`
+asked for, and the summary says so. These types are HTML, CSS and JavaScript;
+no Apex test can observe a change to any of them, so running the suite could
+only ever report something the change did not cause. An org accepts a no-test
+deployment of a package that carries no Apex, production included. One Apex
+class, field or flow anywhere in the delta and the configured level stands, as
+it does for `mode: full`, which has no delta to inspect.
+
+The validation action applies the same rule and records the level it ran, so
+with `quick-deploy` on the two agree: a UI-only validation is promoted, and a
+validation that skipped tests for a delta this deployment would test is not.
 
 ## Inputs
 
@@ -144,7 +162,7 @@ name, before anything is installed.
 | `ignore-whitespace` | `true` | Whether a whitespace-only change counts. |
 | `destructive-changes` | `post` | `post`, `pre` or `ignore`. |
 | `prune-destructive` | `true` | Drop deletions the org has already applied. |
-| `test-level` | `RunLocalTests` | Production accepts nothing less; a sandbox may take `NoTestRun`. |
+| `test-level` | `RunLocalTests` | Production accepts nothing less for a package with Apex in it; a sandbox may take `NoTestRun`. A UI-only delta runs at `NoTestRun` regardless; see above. |
 | `tests` | — | Classes for `RunSpecifiedTests`. |
 | `wait-minutes` | `30` | How long to wait for the org. |
 | `api-version` | from `sfdx-project.json` | Only used when rewriting a pruned manifest. |
