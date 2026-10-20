@@ -279,6 +279,13 @@ describe('the summaries', () => {
     assert.equal(summary.includes('line 50'), false);
   });
 
+  it('strip the CLI\'s colour codes from a failure, which render as noise in markdown', () => {
+    const output = '\u001b[1m\u001b[31mComponent Failures [1]\u001b[39m\u001b[22m\nFlow  Example  insufficient access rights';
+    const summary = summaryFailed(config, {label: 'the delta'}, output);
+    assert.match(summary, /Component Failures \[1\]\nFlow  Example/);
+    assert.equal(summary.includes('\u001b'), false);
+  });
+
   it('say a full run is not a delta', () => {
     assert.match(summaryFull(config, 'abc1234'), /Every component under `force-app\/` at `abc1234`, not a delta/);
   });
