@@ -111,10 +111,11 @@ inputs:
     default: 'true'
   retire-flows:
     description: >-
-      Whether to retire deleted flows that are still active in the org. The org
-      refuses to delete an active flow, so its deletion leaves the package and,
-      for a record-triggered flow, an inert active version takes its place;
-      the flow is deactivated and deleted once the deployment succeeds.
+      Whether to rewrite flow deletions into ones the org accepts. The org
+      deletes a flow version by version and refuses to delete an active one,
+      so each deleted flow is deleted as every version the org holds, and an
+      active one is first deactivated by a `FlowDefinition` in the same
+      deployment.
     required: false
     default: 'true'
   test-level:

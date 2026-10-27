@@ -147,9 +147,9 @@ describe('mismatch', () => {
     assert.match(mismatch(record, delta, {...config, ignoreWhitespace: false}, NOW), /ignored whitespace-only changes/);
   });
 
-  it('refuses a validation that handled active flows differently, including one recorded before it could', () => {
-    assert.match(mismatch(record, delta, {...config, retireFlows: false}, NOW), /retired active flows, and this deployment does not/);
-    assert.match(mismatch({...record, retireFlows: undefined}, delta, config, NOW), /did not retire active flows/);
+  it('refuses a validation that handled flow deletions differently, including one recorded before it could', () => {
+    assert.match(mismatch(record, delta, {...config, retireFlows: false}, NOW), /rewrote flow deletions, and this deployment does not/);
+    assert.match(mismatch({...record, retireFlows: undefined}, delta, config, NOW), /did not rewrite flow deletions/);
   });
 
   it('refuses a validation that ran fewer tests than the deployment asks for, and accepts more', () => {
