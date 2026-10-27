@@ -109,6 +109,15 @@ inputs:
       something left the org by another route.
     required: false
     default: 'true'
+  retire-flows:
+    description: >-
+      Whether to rewrite flow deletions into ones the org accepts. The org
+      deletes a flow version by version and refuses to delete an active one,
+      so each deleted flow is deleted as every version the org holds, and an
+      active one is first deactivated by a `FlowDefinition` in the same
+      deployment.
+    required: false
+    default: 'true'
   test-level:
     description: '`NoTestRun`, `RunSpecifiedTests`, `RunLocalTests` or `RunAllTestsInOrg`.'
     required: false
@@ -240,6 +249,7 @@ runs:
         INPUT_IGNORE_WHITESPACE: ${{ inputs.ignore-whitespace }}
         INPUT_DESTRUCTIVE_CHANGES: ${{ inputs.destructive-changes }}
         INPUT_PRUNE_DESTRUCTIVE: ${{ inputs.prune-destructive }}
+        INPUT_RETIRE_FLOWS: ${{ inputs.retire-flows }}
         INPUT_TEST_LEVEL: ${{ inputs.test-level }}
         INPUT_TESTS: ${{ inputs.tests }}
         INPUT_WAIT_MINUTES: ${{ inputs.wait-minutes }}

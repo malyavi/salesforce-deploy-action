@@ -52,7 +52,8 @@ Three details follow from that:
    the commit's first parent.
 3. Builds the delta — and **finishes green without logging in** when nothing
    deployable changed, moving the anchor forward.
-4. Authenticates, prunes the deletions the org has already applied, and deploys.
+4. Authenticates, prunes the deletions the org has already applied, rewrites
+   flow deletions into ones the org accepts, and deploys.
 5. Moves the anchor and writes the job summary.
 
 `mode: full` skips the delta and deploys the whole source directory. That is the
@@ -162,6 +163,7 @@ name, before anything is installed.
 | `ignore-whitespace` | `true` | Whether a whitespace-only change counts. |
 | `destructive-changes` | `post` | `post`, `pre` or `ignore`. |
 | `prune-destructive` | `true` | Drop deletions the org has already applied. |
+| `retire-flows` | `true` | Rewrite flow deletions into ones the org accepts: every version, deactivated first. |
 | `test-level` | `RunLocalTests` | Production accepts nothing less for a package with Apex in it; a sandbox may take `NoTestRun`. A UI-only delta runs at `NoTestRun` regardless; see above. |
 | `tests` | — | Classes for `RunSpecifiedTests`. |
 | `wait-minutes` | `30` | How long to wait for the org. |
@@ -208,6 +210,31 @@ describes a deletion the org performed months ago.
 The check **fails open**: a type that cannot be listed keeps all of its members,
 so a spurious listing failure behaves like no pruning rather than silently
 skipping a deletion that was genuinely required.
+
+## Deleting flows
+
+The org refuses the deletion of a flow by its bare name, which is how
+sfdx-git-delta lists it — "insufficient access rights on cross-reference id" —
+for two reasons. A flow is deleted **version by version**: since API 44 each
+version is its own component, and the bare name deletes none of them. And an
+**active** flow cannot be deleted at all; deploying a version as `Obsolete` or
+`Draft` does not change that, since it adds an inactive version and leaves the
+active one running.
+
+So each deleted flow is looked up in the org, and its deletion is rewritten to
+name every version the org holds (`My_Flow-1`, `My_Flow-2`, …). An active one also
+gets a `FlowDefinition` with `activeVersionNumber` 0 in the package, which a
+change can also carry itself. The deactivation takes effect inside the
+deployment, check-only or not, so the tests of whatever replaces the flow run
+without it, and the deletions are post-destructive, so they run after it, in the
+same transaction. A failure anywhere rolls all of it back.
+
+A flow whose versions cannot be read keeps its deletion as it was.
+`retire-flows: false` turns this off. Paused or failed flow interviews that
+reference a version still block its deletion; they have to be cleared in the org.
+
+The validation action rewrites the package the same way, so a validation of a change
+that deletes a flow can still be promoted.
 
 ## Concurrency
 

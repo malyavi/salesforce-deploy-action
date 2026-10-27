@@ -36,6 +36,7 @@ const record = {
   sourceDirs: ['force-app', 'malyavi-app'],
   destructive: 'post',
   ignoreWhitespace: true,
+  retireFlows: true,
   testLevel: 'RunLocalTests'
 };
 
@@ -45,6 +46,7 @@ const config = {
   sourceDirs: ['malyavi-app', 'force-app'],
   destructive: 'post',
   ignoreWhitespace: true,
+  retireFlows: true,
   testLevel: 'RunLocalTests'
 };
 
@@ -143,6 +145,11 @@ describe('mismatch', () => {
   it('refuses a validation that treated deletions or whitespace differently', () => {
     assert.match(mismatch(record, delta, {...config, destructive: 'pre'}, NOW), /`post` rather than `pre`/);
     assert.match(mismatch(record, delta, {...config, ignoreWhitespace: false}, NOW), /ignored whitespace-only changes/);
+  });
+
+  it('refuses a validation that handled flow deletions differently, including one recorded before it could', () => {
+    assert.match(mismatch(record, delta, {...config, retireFlows: false}, NOW), /rewrote flow deletions, and this deployment does not/);
+    assert.match(mismatch({...record, retireFlows: undefined}, delta, config, NOW), /did not rewrite flow deletions/);
   });
 
   it('refuses a validation that ran fewer tests than the deployment asks for, and accepts more', () => {
