@@ -3,6 +3,7 @@ import {resolveConfig}                                                          
 import {error, group, setOutput, summary}                                                from '../lib/core.mjs';
 import {buildDelta, isEmpty, resolveScope}                                               from '../lib/delta.mjs';
 import {pruneDestructive, renderPruned}                                                  from '../lib/destructive.mjs';
+import {flowDeletions, renderRetired, renderRetiring, retireFlows, stageRetiringFlows}   from '../lib/flows.mjs';
 import {failureMessage}                                                                  from '../lib/inputs.mjs';
 import {findValidation, startedDeployment, verifyValidation}                             from '../lib/quick-deploy.mjs';
 import {
@@ -36,10 +37,17 @@ import {installToolchain}                                                       
  * is reachable from one; see `lib/test-level.mjs`. The validation action
  * applies the same rule, so its record of such a change says `NoTestRun`,
  * and a deployment that resolves to the same level promotes it.
+ *
+ * A deleted flow that is still active in the org cannot be deleted by the
+ * deployment that removes it, so it is deactivated and deleted once that
+ * deployment succeeds, before the anchor moves; see `lib/flows.mjs`.
  */
 
 /** The resolved configuration, for the signal handlers and the failure handler. */
 let config = null;
+
+/** Flows the deployment leaves active, to be deactivated and deleted once it succeeds. */
+let retiring = [];
 
 let shuttingDown = false;
 
@@ -126,9 +134,14 @@ async function deployDelta() {
 
   await group('Authenticate to the org', () => authenticate(config));
 
+  // A promoted validation is the package as it was validated, so any flow it
+  // left active is among the deletions; the ones it deleted itself are gone by
+  // the time they are looked up, and are skipped.
+  retiring = validation && config.retireFlows ? flowDeletions(delta.destructive) : [];
   if (validation && await promote(validation, delta, ran)) {
     return;
   }
+  retiring = [];
 
   if (config.pruneDestructive && !delta.destructive.isEmpty) {
     const pruned = await group(
@@ -147,6 +160,26 @@ async function deployDelta() {
     }
   } else {
     await summary(summaryDelta(config, delta));
+  }
+
+  // The same step the validation action takes, so the package sent here is the
+  // package a validation of this delta would have checked.
+  if (config.retireFlows && !delta.destructive.isEmpty) {
+    const staged = await group('Check the deleted flows against the org', () => stageRetiringFlows(delta, config));
+    await summary(renderRetiring(staged, {checkOnly: config.checkOnly}));
+    await publishDelta(delta);
+    retiring = staged.retiring.map(({name}) => name);
+
+    // A flow that does not start on a record has no inert version, so a change
+    // that only deleted such flows leaves nothing to send; the org refuses an
+    // empty deployment, and retiring them is the whole job.
+    if (isEmpty(delta)) {
+      console.log('The only changes delete flows still active in the org; retiring them is all there is to do.');
+      await finishRetiring();
+      const anchor = await advanceAnchor(delta.headSha);
+      await publishOutcome('passed', undefined, anchor);
+      return;
+    }
   }
 
   await send(resolveScope(delta, config), delta.headSha, ran, testing.reason);
@@ -236,6 +269,7 @@ async function promote({tag, record}, delta, ran) {
   }
 
   await clearActiveDeployment();
+  await finishRetiring();
 
   const anchor = await advanceAnchor(delta.headSha);
   await summary(summaryDelta(config, delta));
@@ -295,10 +329,37 @@ async function send(scope, headSha, ran, testNote = '') {
   }
 
   await clearActiveDeployment();
+  await finishRetiring();
 
   const anchor = await advanceAnchor(headSha);
   await summary(summarySucceeded(ran, scope, anchor, testNote));
   await publishOutcome('passed', result.deployId, anchor);
+}
+
+/**
+ * Deactivates and deletes the flows the deployment left active.
+ *
+ * Runs before the anchor moves: a run that fails here leaves the anchor where
+ * it was, so the next deployment diffs the same range, finds the same flows
+ * still in the org, and tries again. A check-only run saved nothing, so it has
+ * nothing to finish.
+ *
+ * @return {Promise<void>}
+ */
+async function finishRetiring() {
+  if (retiring.length === 0 || config.checkOnly) {
+    return;
+  }
+
+  let result;
+  try {
+    result = await group('Deactivate and delete the retired flows', () => retireFlows(retiring, config));
+  } catch (thrown) {
+    await summary(renderRetired(retiring, {failure: thrown.output ?? thrown.message}));
+    await publishOutcome('failed');
+    throw thrown;
+  }
+  await summary(renderRetired(retiring, {result}));
 }
 
 /**

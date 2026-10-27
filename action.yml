@@ -109,6 +109,14 @@ inputs:
       something left the org by another route.
     required: false
     default: 'true'
+  retire-flows:
+    description: >-
+      Whether to retire deleted flows that are still active in the org. The org
+      refuses to delete an active flow, so its deletion leaves the package and,
+      for a record-triggered flow, an inert active version takes its place;
+      the flow is deactivated and deleted once the deployment succeeds.
+    required: false
+    default: 'true'
   test-level:
     description: '`NoTestRun`, `RunSpecifiedTests`, `RunLocalTests` or `RunAllTestsInOrg`.'
     required: false
@@ -240,6 +248,7 @@ runs:
         INPUT_IGNORE_WHITESPACE: ${{ inputs.ignore-whitespace }}
         INPUT_DESTRUCTIVE_CHANGES: ${{ inputs.destructive-changes }}
         INPUT_PRUNE_DESTRUCTIVE: ${{ inputs.prune-destructive }}
+        INPUT_RETIRE_FLOWS: ${{ inputs.retire-flows }}
         INPUT_TEST_LEVEL: ${{ inputs.test-level }}
         INPUT_TESTS: ${{ inputs.tests }}
         INPUT_WAIT_MINUTES: ${{ inputs.wait-minutes }}

@@ -52,8 +52,10 @@ Three details follow from that:
    the commit's first parent.
 3. Builds the delta — and **finishes green without logging in** when nothing
    deployable changed, moving the anchor forward.
-4. Authenticates, prunes the deletions the org has already applied, and deploys.
-5. Moves the anchor and writes the job summary.
+4. Authenticates, prunes the deletions the org has already applied, takes
+   deleted flows that are still active out of the deletions, and deploys.
+5. Deactivates and deletes those flows, when there are any.
+6. Moves the anchor and writes the job summary.
 
 `mode: full` skips the delta and deploys the whole source directory. That is the
 bootstrap — a delta only carries what changed, so an org that has never received
@@ -162,6 +164,7 @@ name, before anything is installed.
 | `ignore-whitespace` | `true` | Whether a whitespace-only change counts. |
 | `destructive-changes` | `post` | `post`, `pre` or `ignore`. |
 | `prune-destructive` | `true` | Drop deletions the org has already applied. |
+| `retire-flows` | `true` | Deactivate and delete deleted flows that are still active in the org, instead of failing on their deletion. |
 | `test-level` | `RunLocalTests` | Production accepts nothing less for a package with Apex in it; a sandbox may take `NoTestRun`. A UI-only delta runs at `NoTestRun` regardless; see above. |
 | `tests` | — | Classes for `RunSpecifiedTests`. |
 | `wait-minutes` | `30` | How long to wait for the org. |
@@ -208,6 +211,31 @@ describes a deletion the org performed months ago.
 The check **fails open**: a type that cannot be listed keeps all of its members,
 so a spurious listing failure behaves like no pruning rather than silently
 skipping a deletion that was genuinely required.
+
+## Retiring active flows
+
+The org refuses to delete a flow with an active version — "insufficient access
+rights on cross-reference id" — and no metadata package can deactivate one:
+deploying a version as `Obsolete` or `Draft` adds an inactive version and leaves
+the active one running.
+
+So a deleted flow is looked up in the org before the deployment. An active one
+leaves the deletions, and if it is record-triggered, an *inert* active version
+goes in the package instead: the version the org last received, with its entry
+conditions replaced by two that contradict each other. It goes live in the same
+transaction as whatever replaces the flow, so there is no window in which
+neither runs. Once the deployment succeeds, the flow is deactivated through the
+Tooling API and deleted in a deployment of its own, which runs no tests.
+
+That happens **before the anchor moves**. A run that fails there leaves the
+anchor where it was, so the next one diffs the same range, finds the flow still
+in the org, and tries again. A promoted validation took the same step, so the
+flows it left active are retired the same way. A check-only run saves nothing
+and retires nothing.
+
+Deploying the inert version needs the org to accept active flow deployments —
+*Deploy processes and flows as active*, under Process Automation Settings, in
+production. `retire-flows: false` turns all of this off.
 
 ## Concurrency
 
