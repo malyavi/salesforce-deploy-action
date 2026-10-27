@@ -3,7 +3,7 @@ import {resolveConfig}                                                          
 import {error, group, setOutput, summary}                                                from '../lib/core.mjs';
 import {buildDelta, isEmpty, resolveScope}                                               from '../lib/delta.mjs';
 import {pruneDestructive, renderPruned}                                                  from '../lib/destructive.mjs';
-import {renderFlowDeletions, stageFlowDeletions}                                          from '../lib/flows.mjs';
+import {renderFlowDeletions, stageFlowDeletions}                                         from '../lib/flows.mjs';
 import {failureMessage}                                                                  from '../lib/inputs.mjs';
 import {findValidation, startedDeployment, verifyValidation}                             from '../lib/quick-deploy.mjs';
 import {
